@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Elite Dangerous Carrier Fuel Estimator</title>
+  <style>
+    :root{font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.4}
+    body{max-width:900px;margin:28px auto;padding:18px;color:#0f172a}
+    h1{margin:0 0 8px;font-size:20px}
+    .card{border:1px solid #e6edf6;padding:18px;border-radius:8px;background:#fbfdff}
+    label{display:block;margin-top:12px;font-weight:600;font-size:13px}
+    input[type="number"], select{width:120px;padding:6px;border-radius:6px;border:1px solid #d6e4f5}
+    .row{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:6px}
+    .small{font-size:13px;color:#475569}
+    #result{margin-top:18px;padding:12px;background:#eef6ff;border-radius:8px;border:1px solid #cfe4ff}
+    .muted{color:#64748b;font-size:13px}
+    .controls{display:flex;gap:12px;align-items:center;margin-top:12px}
+    input[type="range"]{width:240px}
+    .copy{background:#0ea5e9;color:white;border:none;padding:6px 10px;border-radius:6px;cursor:pointer}
+    footer{margin-top:18px;color:#475569;font-size:13px}
+    .formula{background:#fff;padding:10px;border-radius:6px;border:1px dashed #e2e8f0;margin-top:12px}
+  </style>
+</head>
+<body>
+  <h1>Elite Dangerous — Carrier Fuel Estimator</h1>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="distance">Jump Distance (D) — ly</label>
+        <input id="distance" type="number" step="0.1" min="0" value="10" />
+      </div>
+      <div>
+        <label for="optional">Optional Services (M)</label>
+        <input id="optional" type="number" step="1" min="0" value="0" />
+      </div>
+      <div>
+        <label for="tritium">Tritium in Depot (T) — tons</label>
+        <input id="tritium" type="number" step="1" min="0" value="0" />
+      </div>
+      <div>
+        <label for="refill">Depot Refilled After Each Jump?</label>
+        <select id="refill">
+          <option value="no">No — use canonical formula</option>
+          <option value="yes">Yes — use simplified formula</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="massAdj">Carrier Mass Adjustment (%)</label>
+    <div class="controls">
+      <input id="massAdj" type="range" min="-50" max="200" step="1" value="0" />
+      <div class="small" id="massAdjLabel">0% (no adjustment)</div>
+    </div>
+
+    <div id="result" role="status" aria-live="polite">
+      <div><strong>Estimated Fuel Required:</strong> <span id="fuel">—</span> tons Tritium</div>
+      <div class="muted" id="breakdown">Enter values and click Calculate (or adjust inputs).</div>
+    </div>
+
+    <div class="formula">
+      <div><strong>Canonical formula</strong> — F = ROUND(10 + (D / 4) × (1 + (M + T) / 25000))</div>
+      <div><strong>Simplified (refill each jump)</strong> — F = ROUND(10 + D × (0.26 + M / 100000))</div>
+      <div class="muted" style="margin-top:6px">Mass adjustment is a manual percent applied to the computed result to allow modeling heavier or lighter carriers.</div>
+    </div>
+
+    <div style="margin-top:12px">
+      <button id="calc" class="copy">Calculate</button>
+      <button id="copyBtn" style="margin-left:8px" class="copy">Copy Result</button>
+    </div>
+  </div>
+
+  <footer>
+    Implemented formulas are based on publicly documented Elite Dangerous carrier fuel equations. Mass influence on the formula is not published — use the adjustment slider at your discretion.
+  </footer>
+
+  <script>
+    // Core formula functions
+    function roundToInt(n) {
+      // ROUND as per formula — round to nearest integer
+      return Math.round(n);
+    }
+
+    // Canonical formula:
+    // F = ROUND(10 + (D / 4) * (1 + (M + T) / 25000))
+    function canonicalFuel(D, M, T) {
+      const val = 10 + (D / 4) * (1 + (M + T) / 25000);
+      return roundToInt(val);
+    }
+
+    // Simplified/approximate formula when depot refilled after every jump:
+    // F = ROUND(10 + D * (0.26 + M / 100000))
+    function simplifiedFuel(D, M) {
+      const val = 10 + D * (0.26 + M / 100000);
+      return roundToInt(val);
+    }
+
+    // Apply mass adjustment percent (user-controlled)
+    function applyMassAdjustment(fuel, percent) {
+      // percent is e.g. 10 for +10% or -5 for -5%
+      return Math.max(0, Math.round(fuel * (1 + percent / 100)));
+    }
+
+    // UI wiring
+    const inputs = {
+      distance: document.getElementById('distance'),
+      optional: document.getElementById('optional'),
+      tritium: document.getElementById('tritium'),
+      refill: document.getElementById('refill'),
+      massAdj: document.getElementById('massAdj'),
+      massAdjLabel: document.getElementById('massAdjLabel'),
+      fuelSpan: document.getElementById('fuel'),
+      breakdown: document.getElementById('breakdown'),
+      calcBtn: document.getElementById('calc'),
+      copyBtn: document.getElementById('copyBtn'),
+    };
+
+    function readValues() {
+      const D = parseFloat(inputs.distance.value) || 0;
+      const M = parseInt(inputs.optional.value) || 0;
+      const T = parseFloat(inputs.tritium.value) || 0;
+      const refill = inputs.refill.value === 'yes';
+      const massAdj = parseInt(inputs.massAdj.value) || 0;
+      return { D, M, T, refill, massAdj };
+    }
+
+    function updateMassLabel() {
+      const v = parseInt(inputs.massAdj.value, 10);
+      inputs.massAdjLabel.textContent = `${v >= 0 ? '+' + v : v}% ${v === 0 ? '(no adjustment)' : ''}`;
+    }
+
+    function calculateAndRender() {
+      const { D, M, T, refill, massAdj } = readValues();
+      let baseFuel, usedFormula;
+
+      if (refill) {
+        baseFuel = simplifiedFuel(D, M);
+        usedFormula = 'Simplified (refill each jump)';
+      } else {
+        baseFuel = canonicalFuel(D, M, T);
+        usedFormula = 'Canonical';
+      }
+
+      const adjustedFuel = applyMassAdjustment(baseFuel, massAdj);
+
+      // Build breakdown text with a few helpful intermediate values
+      const breakdownLines = [
+        `Using: ${usedFormula} formula.`,
+        `Inputs — D: ${D} ly, M: ${M}, T: ${T} tons (depot).`,
+        `Base fuel (before mass adj): ${baseFuel} tons.`,
+        massAdj !== 0 ? `Mass adjustment: ${massAdj}% → adjusted fuel: ${adjustedFuel} tons.` : 'No mass adjustment applied.',
+        `If you want to model depot being refilled each jump, set "Depot Refilled" to Yes to use the simplified formula.`,
+      ];
+
+      inputs.fuelSpan.textContent = adjustedFuel;
+      inputs.breakdown.textContent = breakdownLines.join(' ');
+    }
+
+    // Events
+    inputs.calcBtn.addEventListener('click', calculateAndRender);
+    inputs.copyBtn.addEventListener('click', () => {
+      const txt = `Estimated fuel: ${inputs.fuelSpan.textContent} tons Tritium`;
+      navigator.clipboard?.writeText(txt).then(() => {
+        inputs.copyBtn.textContent = 'Copied!';
+        setTimeout(() => inputs.copyBtn.textContent = 'Copy Result', 1200);
+      }).catch(() => {
+        alert(txt);
+      });
+    });
+
+    // Recalculate on changes for quick feedback
+    ['distance','optional','tritium','refill','massAdj'].forEach(id => {
+      document.getElementById(id).addEventListener('input', () => {
+        updateMassLabel();
+        calculateAndRender();
+      });
+    });
+
+    // initial render
+    updateMassLabel();
+    calculateAndRender();
+
+    // Expose functions to console for testing
+    window.__CarrierFuel = { canonicalFuel, simplifiedFuel, applyMassAdjustment, calculateAndRender };
+  </script>
+</body>
+</html>
